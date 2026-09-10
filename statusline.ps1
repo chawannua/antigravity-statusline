@@ -12,15 +12,14 @@ try {
 $ESC         = [char]27
 $RESET       = "$ESC[0m"
 $BOLD        = "$ESC[1m"
-$C_DARK_BLUE = "$ESC[38;5;32m"   # Deep Dark Sapphire Blue for agy branding & gauge
-$C_SLATE     = "$ESC[38;5;67m"   # Slate blue for paths & git branch
-$C_MUTED     = "$ESC[38;5;244m"  # Muted graphite for separators and labels
-$C_DARK      = "$ESC[38;5;238m"  # Dark gray for empty gauge
-$C_WHITE     = "$ESC[38;5;253m"  # Crisp off-white for model name
-$C_WARN      = "$ESC[38;5;221m"  # Amber for warnings & dirty states
-$C_ALERT     = "$ESC[38;5;203m"  # Coral red for high context usage
+$C_DARK_BLUE = "$ESC[38;5;32m"   # Deep Sapphire Blue
+$C_SLATE     = "$ESC[38;5;67m"   # Slate Blue
+$C_MUTED     = "$ESC[38;5;244m"  # Graphite
+$C_DARK      = "$ESC[38;5;238m"  # Dark gray
+$C_WHITE     = "$ESC[38;5;253m"  # Crisp off-white
+$C_WARN      = "$ESC[38;5;221m"  # Amber
+$C_ALERT     = "$ESC[38;5;203m"  # Coral red
 
-# --- Minimal Glyphs ---
 $GLYPH_AGY = [char]0x25C6  # ◆
 $GLYPH_SEP = [char]0x00B7  # ·
 $GLYPH_BAR = [char]0x2501  # ━
@@ -44,7 +43,7 @@ if ($payload.model -and $payload.model.param_summary) { $modelSummary = " ${C_MU
 if ($payload.model -and $payload.model.max_mode) { $modelSummary += " ${C_ALERT}[MAX]${RESET}" }
 $modelPart = "${C_DARK_BLUE}${GLYPH_AGY} ${C_WHITE}${BOLD}${modelName}${RESET}${modelSummary}"
 
-# 2. Workspace Directory (with ~ abbreviation)
+# 2. Workspace Directory
 $workDir = ""
 if ($payload.workspace -and $payload.workspace.current_dir) { $workDir = $payload.workspace.current_dir }
 elseif ($payload.cwd) { $workDir = $payload.cwd }
@@ -61,7 +60,7 @@ if ($workDir) {
 }
 $dirPart = "${C_SLATE}${dirDisplay}${RESET}"
 
-# 3. Git Status (Fast check with (local) fallback)
+# 3. Git Status
 $gitPart = ""
 if ($workDir -and (Test-Path $workDir)) {
     try {
@@ -80,13 +79,13 @@ if (-not $gitPart) {
     $gitPart = "${C_MUTED}(local)${RESET}"
 }
 
-# 4. Session Identity (Only show custom name if user explicitly set one via /title)
+# 4. Session Identity (Only if custom name is set)
 $sessionPart = ""
 if ($payload.session_name) {
     $sessionPart = "${C_SLATE}[$($payload.session_name)]${RESET}"
 }
 
-# 5. Session Elapsed Time (from transcript creation timestamp)
+# 5. Session Elapsed Time
 $elapsedPart = ""
 if ($payload.transcript_path -and (Test-Path $payload.transcript_path)) {
     try {
@@ -114,7 +113,7 @@ $line1Parts += $clockPart
 if ($badges.Count -gt 0) { $line1Parts += ($badges -join " ") }
 $line1 = ($line1Parts -join $C_SEP)
 
-# --- Line 2: Context Window & Engine Telemetry ---
+# --- Line 2: Context Window & Weekly Limit ---
 $usedPct = 0.0
 $inputTokens = 0
 $outputTokens = 0
@@ -143,10 +142,43 @@ $fIn  = Format-Number $inputTokens
 $fMax = Format-Number $contextSize
 $fOut = Format-Number $outputTokens
 $tokenDetails = "${C_MUTED}(In: ${C_DARK_BLUE}${fIn}${C_MUTED} / ${fMax} | Out: ${C_DARK_BLUE}${fOut}${C_MUTED})${RESET}"
+$ctxPart = "${C_MUTED}ctx:${RESET} ${bar} ${pctDisplay} ${tokenDetails}"
+
+# Weekly Limit (7d Rate Limit / Quota)
+$weekPct = 0.0
+$weekResetStr = ""
+if ($payload.rate_limits -and $payload.rate_limits.seven_day) {
+    if ($null -ne $payload.rate_limits.seven_day.used_percentage) {
+        $weekPct = [double]$payload.rate_limits.seven_day.used_percentage
+    }
+    if ($payload.rate_limits.seven_day.resets_at) {
+        $localTime = [DateTimeOffset]::FromUnixTimeSeconds([int64]$payload.rate_limits.seven_day.resets_at).ToLocalTime()
+        $weekResetStr = " ${C_MUTED}($($localTime.ToString('ddd HH:mm')))${RESET}"
+    }
+} elseif ($payload.quota -and $payload.quota.seven_day) {
+    if ($null -ne $payload.quota.seven_day.used_percentage) {
+        $weekPct = [double]$payload.quota.seven_day.used_percentage
+    }
+} elseif ($null -ne $payload.weekly_limit) {
+    $weekPct = [double]$payload.weekly_limit
+}
+
+$W_BAR = 8
+$wFilled = [int][math]::Round(($weekPct / 100.0) * $W_BAR)
+if ($wFilled -gt $W_BAR) { $wFilled = $W_BAR }
+if ($wFilled -lt 0) { $wFilled = 0 }
+$wEmpty = $W_BAR - $wFilled
+
+$cWeek = if ($weekPct -ge 85.0) { $C_ALERT } elseif ($weekPct -ge 65.0) { $C_WARN } else { $C_SLATE }
+$wBarFilled = [string]$GLYPH_BAR * $wFilled
+$wBarEmpty  = [string]$GLYPH_BAR * $wEmpty
+$wBar = "${cWeek}${wBarFilled}${C_DARK}${wBarEmpty}${RESET}"
+$weekPart = "${C_MUTED}7d:${RESET} ${wBar} ${cWeek}$([math]::Round($weekPct, 1))%${RESET}${weekResetStr}"
 
 $versionBadge = if ($payload.version) { "${C_DARK_BLUE}agy v$($payload.version)${RESET}" } else { "${C_DARK_BLUE}agy${RESET}" }
 
-$line2 = "${C_MUTED}ctx:${RESET} ${bar} ${pctDisplay} ${tokenDetails}${C_SEP}${versionBadge}"
+$line2Parts = @($ctxPart, $weekPart, $versionBadge)
+$line2 = ($line2Parts -join $C_SEP)
 
 Write-Output $line1
 Write-Output $line2
