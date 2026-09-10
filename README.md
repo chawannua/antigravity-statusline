@@ -5,19 +5,19 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue?style=flat-square)
 ![Stars](https://img.shields.io/github/stars/chawannua/antigravity-statusline?style=flat-square)
 
-Nordic minimalist statusline for Antigravity.
+Nordic minimalist statusline for Antigravity CLI with live context gauges, token reset countdowns, and quota telemetry.
 
 ## Preview
 
-```text
-~ chawannua/antigravity-statusline ❯ 
-```
+![Antigravity Statusline Preview](assets/preview.png)
 
 ## Features
 
-- Minimalist design
-- Git status integration
-- Fast and responsive
+- **Nordic Minimalist Aesthetic**: High-density typography with subtle glyphs (`◆`, `·`, `━`).
+- **Context Telemetry**: Real-time context window usage gauge with exact input/output tokens.
+- **Quota & Reset Countdowns**: Live 5-hour and 7-day rate-limit tracking with exact target reset time and relative countdown.
+- **Git Integration**: Current working directory, branch, dirty status indicator, and local fallback.
+- **Ultra Fast**: Lightweight, non-blocking execution with zero external runtime dependencies.
 
 ## Quick Install
 
@@ -28,12 +28,21 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chawannua/antigravity-
 
 ## Configuration
 
-You can customize the prompt by editing the variables in `statusline.ps1`.
+Configure the statusline hook in your Antigravity CLI settings:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "powershell -ExecutionPolicy Bypass -File C:\\Users\\Chawan.CHAWANNUA\\Desktop\\statusline-agy.ps1"
+  }
+}
+```
 
 ## Versioning
 
 This project strictly follows [Semantic Versioning](https://semver.org/) (`Major.Minor.Patch`):
 
-- **Major** (`X.0.0`): Breaking changes (e.g. `BREAKING CHANGE` or `feat!:` or `refactor!:`)
-- **Minor** (`0.X.0`): New features (e.g. `feat:` or `feat(...):`)
+- **Major** (`X.0.0`): Breaking changes (e.g. `BREAKING CHANGE` or `feat!:`, `refactor!:`)
+- **Minor** (`0.X.0`): New features (e.g. `feat:`, `feat(...):`)
 - **Patch** (`0.0.X`): Bug fixes, refactors, docs, style, etc. (e.g. `fix:`, `refactor:`, `perf:`, `docs:`, `chore:`)
