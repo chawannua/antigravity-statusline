@@ -1,11 +1,24 @@
 {
-  "agent": "antigravity",
-  "status": "idle",
-  "tasks": 2,
-  "rate_limits": {
-    "seven_day": {
-      "used_percentage": 42.5,
-      "resets_at": 1789268580
+  "version": "1.2.0",
+  "cwd": "C:\\Users\\Chawan.CHAWANNUA\\projects\\demo",
+  "model": {
+    "display_name": "Gemini 3.8 Flash",
+    "param_summary": "High"
+  },
+  "context_window": {
+    "used_percentage": 19.6,
+    "total_input_tokens": 206000,
+    "total_output_tokens": 170400,
+    "context_window_size": 1048576
+  },
+  "quota": {
+    "gemini-5h": {
+      "remaining_fraction": 0.251,
+      "reset_in_seconds": 11460
+    },
+    "gemini-weekly": {
+      "remaining_fraction": 0.194,
+      "reset_in_seconds": 322800
     }
   }
 }

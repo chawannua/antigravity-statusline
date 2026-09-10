@@ -60,6 +60,58 @@ function Get-ResetTimeStrs([int64]$unixSeconds, [bool]$is7Day) {
     return @{ Abs = $timeAbs; Rel = $timeRel }
 }
 
+function Get-Bar([double]$pct, [int]$width = 10, $activeColor = $C_DARK_BLUE) {
+    $p = [math]::Max(0.0, [math]::Min(100.0, $pct))
+    $filled = [int][math]::Round(($p / 100.0) * $width)
+    if ($filled -gt $width) { $filled = $width }
+    $empty = $width - $filled
+    $cBar = if ($p -ge 85.0) { $C_ALERT } elseif ($p -ge 65.0) { $C_WARN } else { $activeColor }
+    $fStr = [string]$GLYPH_BAR * $filled
+    $eStr = [string]$GLYPH_BAR * $empty
+    return "${cBar}${fStr}${C_DARK}${eStr}${RESET}"
+}
+
+function Get-QuotaBucket($rawPayload, [string]$type) {
+    if ($null -eq $rawPayload) { return $null }
+    $bucket = $null
+    if ($type -eq "5h") {
+        if ($rawPayload.quota -and $rawPayload.quota.'gemini-5h') { $bucket = $rawPayload.quota.'gemini-5h' }
+        elseif ($rawPayload.quota -and $rawPayload.quota.'3p-5h' -and -not $rawPayload.quota.'3p-5h'.disabled) { $bucket = $rawPayload.quota.'3p-5h' }
+        elseif ($rawPayload.rate_limits -and $rawPayload.rate_limits.five_hour) { $bucket = $rawPayload.rate_limits.five_hour }
+        elseif ($rawPayload.quota -and $rawPayload.quota.five_hour) { $bucket = $rawPayload.quota.five_hour }
+    } else {
+        if ($rawPayload.quota -and $rawPayload.quota.'gemini-weekly') { $bucket = $rawPayload.quota.'gemini-weekly' }
+        elseif ($rawPayload.quota -and $rawPayload.quota.'3p-weekly' -and -not $rawPayload.quota.'3p-weekly'.disabled) { $bucket = $rawPayload.quota.'3p-weekly' }
+        elseif ($rawPayload.quota -and $rawPayload.quota.seven_day) { $bucket = $rawPayload.quota.seven_day }
+        elseif ($rawPayload.rate_limits -and $rawPayload.rate_limits.seven_day) { $bucket = $rawPayload.rate_limits.seven_day }
+        elseif ($null -ne $rawPayload.weekly_limit) { $bucket = $rawPayload.weekly_limit }
+    }
+    if ($null -eq $bucket) { return $null }
+
+    $pct = 0.0
+    $unixSec = 0
+    $now = [DateTimeOffset]::UtcNow
+
+    if ($bucket -is [double] -or $bucket -is [int] -or $bucket -is [long]) {
+        $pct = [double]$bucket
+    } elseif ($bucket -is [psobject] -or $bucket -is [hashtable]) {
+        if ($bucket.disabled -eq $true) { return $null }
+        if ($null -ne $bucket.used_percentage) {
+            $pct = [double]$bucket.used_percentage
+        } elseif ($null -ne $bucket.remaining_fraction) {
+            $pct = [math]::Max(0.0, [math]::Min(100.0, (1.0 - [double]$bucket.remaining_fraction) * 100.0))
+        }
+        if ($bucket.reset_in_seconds) {
+            $unixSec = $now.AddSeconds([double]$bucket.reset_in_seconds).ToUnixTimeSeconds()
+        } elseif ($bucket.reset_time) {
+            try { $unixSec = [DateTimeOffset]::Parse([string]$bucket.reset_time).ToUnixTimeSeconds() } catch {}
+        } elseif ($bucket.resets_at) {
+            $unixSec = [int64]$bucket.resets_at
+        }
+    }
+    return @{ Pct = $pct; UnixSeconds = $unixSec }
+}
+
 function Format-Number($num) {
     if ($null -eq $num -or $num -le 0) { return "0" }
     if ($num -ge 1000000) { return "$([math]::Round($num / 1000000.0, 1))M" }
@@ -149,62 +201,51 @@ if ($payload.context_window) {
     if ($payload.context_window.context_window_size) { $contextSize = $payload.context_window.context_window_size }
 }
 
-$BAR_WIDTH = 10
-$filledChars = [int][math]::Round(($usedPct / 100.0) * $BAR_WIDTH)
-if ($filledChars -gt $BAR_WIDTH) { $filledChars = $BAR_WIDTH }
-if ($filledChars -lt 0) { $filledChars = 0 }
-$emptyChars = $BAR_WIDTH - $filledChars
-
-$cBar = if ($usedPct -ge 85.0) { $C_ALERT } elseif ($usedPct -ge 65.0) { $C_WARN } else { $C_DARK_BLUE }
-$barFilled = [string]$GLYPH_BAR * $filledChars
-$barEmpty  = [string]$GLYPH_BAR * $emptyChars
-$bar = "${cBar}${barFilled}${C_DARK}${barEmpty}${RESET}"
-
-$pctDisplay = "${cBar}$([math]::Round($usedPct, 1))%${RESET}"
+$bar = Get-Bar -pct $usedPct -width 10 -activeColor $C_DARK_BLUE
+$pctDisplay = "$([math]::Round($usedPct, 1))%"
 $fIn  = Format-Number $inputTokens
 $fMax = Format-Number $contextSize
 $fOut = Format-Number $outputTokens
 $tokenDetails = "${C_MUTED}(In: ${C_DARK_BLUE}${fIn}${C_MUTED} / ${fMax} | Out: ${C_DARK_BLUE}${fOut}${C_MUTED})${RESET}"
-$ctxPart = "${C_MUTED}ctx:${RESET} ${bar} ${pctDisplay} ${tokenDetails}"
+$cVal = if ($usedPct -ge 85.0) { $C_ALERT } elseif ($usedPct -ge 65.0) { $C_WARN } else { $C_DARK_BLUE }
+$ctxPart = "${C_MUTED}ctx:${RESET} ${bar} ${cVal}${pctDisplay}${RESET} ${tokenDetails}"
 
-# Weekly Limit (7d Rate Limit / Quota)
-$weekPct = 0.0
-$weekResetStr = ""
-if ($payload.rate_limits -and $payload.rate_limits.seven_day) {
-    if ($null -ne $payload.rate_limits.seven_day.used_percentage) {
-        $weekPct = [double]$payload.rate_limits.seven_day.used_percentage
+# 5-Hour Limit / Quota
+$b5 = Get-QuotaBucket $payload "5h"
+$part5h = ""
+if ($null -ne $b5) {
+    $pct5 = $b5.Pct
+    $bar5 = Get-Bar -pct $pct5 -width 8 -activeColor $C_DARK_BLUE
+    $cVal5 = if ($pct5 -ge 85.0) { $C_ALERT } elseif ($pct5 -ge 65.0) { $C_WARN } else { $C_DARK_BLUE }
+    $resetStr5 = ""
+    if ($b5.UnixSeconds -gt 0) {
+        $rStrs5 = Get-ResetTimeStrs $b5.UnixSeconds $false
+        $resetStr5 = " ${C_MUTED}($($rStrs5.Abs) ${GLYPH_SEP} $($rStrs5.Rel))${RESET}"
     }
-    if ($payload.rate_limits.seven_day.resets_at) {
-        $rStrs = Get-ResetTimeStrs $payload.rate_limits.seven_day.resets_at $true
-        $weekResetStr = " ${C_MUTED}($($rStrs.Abs) ${GLYPH_SEP} $($rStrs.Rel))${RESET}"
-    }
-} elseif ($payload.quota -and $payload.quota.seven_day) {
-    if ($null -ne $payload.quota.seven_day.used_percentage) {
-        $weekPct = [double]$payload.quota.seven_day.used_percentage
-    }
-    if ($payload.quota.seven_day.resets_at) {
-        $rStrs = Get-ResetTimeStrs $payload.quota.seven_day.resets_at $true
-        $weekResetStr = " ${C_MUTED}($($rStrs.Abs) ${GLYPH_SEP} $($rStrs.Rel))${RESET}"
-    }
-} elseif ($null -ne $payload.weekly_limit) {
-    $weekPct = [double]$payload.weekly_limit
+    $part5h = "${C_MUTED}5h:${RESET} ${bar5} ${cVal5}$([math]::Round($pct5, 1))%${RESET}${resetStr5}"
 }
 
-$W_BAR = 8
-$wFilled = [int][math]::Round(($weekPct / 100.0) * $W_BAR)
-if ($wFilled -gt $W_BAR) { $wFilled = $W_BAR }
-if ($wFilled -lt 0) { $wFilled = 0 }
-$wEmpty = $W_BAR - $wFilled
-
-$cWeek = if ($weekPct -ge 85.0) { $C_ALERT } elseif ($weekPct -ge 65.0) { $C_WARN } else { $C_SLATE }
-$wBarFilled = [string]$GLYPH_BAR * $wFilled
-$wBarEmpty  = [string]$GLYPH_BAR * $wEmpty
-$wBar = "${cWeek}${wBarFilled}${C_DARK}${wBarEmpty}${RESET}"
-$weekPart = "${C_MUTED}7d:${RESET} ${wBar} ${cWeek}$([math]::Round($weekPct, 1))%${RESET}${weekResetStr}"
+# Weekly Limit (7d Rate Limit / Quota)
+$b7 = Get-QuotaBucket $payload "7d"
+$part7d = ""
+if ($null -ne $b7) {
+    $pct7 = $b7.Pct
+    $bar7 = Get-Bar -pct $pct7 -width 8 -activeColor $C_SLATE
+    $cVal7 = if ($pct7 -ge 85.0) { $C_ALERT } elseif ($pct7 -ge 65.0) { $C_WARN } else { $C_SLATE }
+    $resetStr7 = ""
+    if ($b7.UnixSeconds -gt 0) {
+        $rStrs7 = Get-ResetTimeStrs $b7.UnixSeconds $true
+        $resetStr7 = " ${C_MUTED}($($rStrs7.Abs) ${GLYPH_SEP} $($rStrs7.Rel))${RESET}"
+    }
+    $part7d = "${C_MUTED}7d:${RESET} ${bar7} ${cVal7}$([math]::Round($pct7, 1))%${RESET}${resetStr7}"
+}
 
 $versionBadge = if ($payload.version) { "${C_DARK_BLUE}agy v$($payload.version)${RESET}" } else { "${C_DARK_BLUE}agy${RESET}" }
 
-$line2Parts = @($ctxPart, $weekPart, $versionBadge)
+$line2Parts = @($ctxPart)
+if ($part5h) { $line2Parts += $part5h }
+if ($part7d) { $line2Parts += $part7d }
+$line2Parts += $versionBadge
 $line2 = ($line2Parts -join $C_SEP)
 
 Write-Output $line1
