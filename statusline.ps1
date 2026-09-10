@@ -28,6 +28,38 @@ $GLYPH_CLK = [char]0x23F1  # ⏱
 
 $C_SEP = " ${C_MUTED}${GLYPH_SEP}${RESET} "
 
+function Get-ResetTimeStrs([int64]$unixSeconds, [bool]$is7Day) {
+    if (-not $unixSeconds) { return @{ Abs = ""; Rel = "" } }
+    $target = [DateTimeOffset]::FromUnixTimeSeconds($unixSeconds)
+    $now = [DateTimeOffset]::UtcNow
+    $diff = $target - $now
+    
+    $localTime = $target.ToLocalTime()
+    $absFmt = if ($is7Day) { 'ddd HH:mm' } else { 'HH:mm' }
+    $timeAbs = $localTime.ToString($absFmt)
+    
+    $timeRel = ""
+    if ($diff.TotalSeconds -le 0) { 
+        $timeRel = "now" 
+    } elseif ($diff.TotalMinutes -lt 1) { 
+        $timeRel = "in <1m" 
+    } else {
+        $parts = @()
+        if ($diff.Days -gt 0) {
+            $parts += "$($diff.Days)d"
+            if ($diff.Hours -gt 0) { $parts += "$($diff.Hours)h" }
+        } elseif ($diff.Hours -gt 0) {
+            $parts += "$($diff.Hours)h"
+            if ($diff.Minutes -gt 0) { $parts += "$($diff.Minutes)m" }
+        } else {
+            $parts += "$($diff.Minutes)m"
+        }
+        $timeRel = "in " + ($parts -join ' ')
+    }
+    
+    return @{ Abs = $timeAbs; Rel = $timeRel }
+}
+
 function Format-Number($num) {
     if ($null -eq $num -or $num -le 0) { return "0" }
     if ($num -ge 1000000) { return "$([math]::Round($num / 1000000.0, 1))M" }
@@ -97,19 +129,10 @@ if ($payload.transcript_path -and (Test-Path $payload.transcript_path)) {
     } catch {}
 }
 
-# 6. System Clock
-$clockPart = "${C_MUTED}$([DateTime]::Now.ToString('HH:mm'))${RESET}"
-
-# 7. Badges
-$badges = @()
-if ($payload.autorun) { $badges += "${C_ALERT}${BOLD}[AUTO]${RESET}" }
-if ($payload.vim -and $payload.vim.mode) { $badges += "${C_WARN}[VIM:$($payload.vim.mode)]${RESET}" }
-
 # Assemble Line 1
 $line1Parts = @($modelPart, $dirPart, $gitPart)
 if ($sessionPart) { $line1Parts += $sessionPart }
 if ($elapsedPart) { $line1Parts += $elapsedPart }
-$line1Parts += $clockPart
 if ($badges.Count -gt 0) { $line1Parts += ($badges -join " ") }
 $line1 = ($line1Parts -join $C_SEP)
 
@@ -152,12 +175,16 @@ if ($payload.rate_limits -and $payload.rate_limits.seven_day) {
         $weekPct = [double]$payload.rate_limits.seven_day.used_percentage
     }
     if ($payload.rate_limits.seven_day.resets_at) {
-        $localTime = [DateTimeOffset]::FromUnixTimeSeconds([int64]$payload.rate_limits.seven_day.resets_at).ToLocalTime()
-        $weekResetStr = " ${C_MUTED}($($localTime.ToString('ddd HH:mm')))${RESET}"
+        $rStrs = Get-ResetTimeStrs $payload.rate_limits.seven_day.resets_at $true
+        $weekResetStr = " ${C_MUTED}($($rStrs.Abs) ${GLYPH_SEP} $($rStrs.Rel))${RESET}"
     }
 } elseif ($payload.quota -and $payload.quota.seven_day) {
     if ($null -ne $payload.quota.seven_day.used_percentage) {
         $weekPct = [double]$payload.quota.seven_day.used_percentage
+    }
+    if ($payload.quota.seven_day.resets_at) {
+        $rStrs = Get-ResetTimeStrs $payload.quota.seven_day.resets_at $true
+        $weekResetStr = " ${C_MUTED}($($rStrs.Abs) ${GLYPH_SEP} $($rStrs.Rel))${RESET}"
     }
 } elseif ($null -ne $payload.weekly_limit) {
     $weekPct = [double]$payload.weekly_limit

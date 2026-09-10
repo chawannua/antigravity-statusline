@@ -1,5 +1,11 @@
 {
   "agent": "antigravity",
   "status": "idle",
-  "tasks": 2
+  "tasks": 2,
+  "rate_limits": {
+    "seven_day": {
+      "used_percentage": 42.5,
+      "resets_at": 1789268580
+    }
+  }
 }
